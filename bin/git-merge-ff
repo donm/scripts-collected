@@ -1,0 +1,68 @@
+#!/bin/bash
+
+# Useful for the same situation as `git branch -f localbranch
+# remote/remotebranch`, except makes sure that the merge would be a fast
+# forward.
+
+# Check to make sure that the merge would be a fast-forward, then perform it
+# without checking out the branch, but producing the same results as if you
+# had--the entry in the reflog is exactly like a fast forward merge, instead
+# of the "reset" one you get if you use branch -f.
+
+# Can be called as a git command: git merge-ff.
+
+# By Jefromi.  Copied from
+# https://stackoverflow.com/questions/3216360/merge-update-and-pull-git-branches-without-using-checkouts
+
+_usage() {
+    echo "Usage: git merge-ff <branch> <committish-to-merge>" 1>&2
+    exit 1
+}
+
+_merge_ff() {
+    branch="$1"
+    commit="$2"
+
+    branch_orig_hash="$(git show-ref -s --verify refs/heads/$branch 2> /dev/null)"
+    if [ $? -ne 0 ]; then
+        echo "Error: unknown branch $branch" 1>&2
+        _usage
+    fi
+
+    commit_orig_hash="$(git rev-parse --verify $commit 2> /dev/null)"
+    if [ $? -ne 0 ]; then
+        echo "Error: unknown revision $commit" 1>&2
+        _usage
+    fi
+
+    if [ "$(git symbolic-ref HEAD)" = "refs/heads/$branch" ]; then
+        git merge $quiet --ff-only "$commit"
+    else
+        if [ "$(git merge-base $branch_orig_hash $commit_orig_hash)" != "$branch_orig_hash" ]; then
+            echo "Error: merging $commit into $branch would not be a fast-forward" 1>&2
+            exit 1
+        fi
+        echo "Updating ${branch_orig_hash:0:7}..${commit_orig_hash:0:7}"
+        if git update-ref -m "merge $commit: Fast forward" "refs/heads/$branch" "$commit_orig_hash" "$branch_orig_hash"; then
+            if [ -z $quiet ]; then
+                echo "Fast forward"
+                git diff --stat "$branch@{1}" "$branch"
+            fi
+        else
+            echo "Error: fast forward using update-ref failed" 1>&2
+        fi
+    fi
+}
+
+while getopts "q" opt; do
+    case $opt in
+        q ) quiet="-q";;
+        * ) ;;
+    esac
+done
+shift $((OPTIND-1))
+
+case $# in
+    2 ) _merge_ff "$1" "$2";;
+    * ) _usage
+esac
